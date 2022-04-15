@@ -194,12 +194,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 	reply.VoteGranted = false
 	reply.Term = rf.currentTerm
-	DPrintf("Raft[%v](%v) receive RequestVote request.\n", rf.me, rf.state)
+	DPrintf("Raft[%v](%v term:%v) receive RequestVote request.\n", rf.me, rf.state, rf.currentTerm)
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.state = follower
 		rf.votedFor = -1
-		DPrintf("Raft[%v](%v) change to follower due to higher term %v.\n", rf.me, rf.state, args.Term)
+		DPrintf("Raft[%v](%v term:%v) change to follower due to higher term %v.\n", rf.me, rf.state, rf.currentTerm, args.Term)
 	}
 	if rf.state == follower {
 		if args.Term < rf.currentTerm {
@@ -208,7 +208,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isCandidateUpToDate(args.Term, args.LastLogIndex) {
 			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
-			DPrintf("Raft[%v](%v) vote for Raft[%v].\n", rf.me, rf.state, rf.votedFor)
+			DPrintf("Raft[%v](%v term:%v) vote for Raft[%v].\n", rf.me, rf.state, rf.currentTerm, rf.votedFor)
 			rf.heartBeat = true
 		}
 	}
@@ -255,13 +255,13 @@ func (rf *Raft) isCandidateUpToDate(term int, lastLogIndex int) bool {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
-	DPrintf("Raft[%v](%v) receive ApeendEntries.\n", rf.me, rf.state)
+	DPrintf("Raft[%v](%v term:%v) receive ApeendEntries.\n", rf.me, rf.state, rf.currentTerm)
 	defer rf.mu.Unlock()
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.state = follower
 		rf.votedFor = -1
-		DPrintf("Raft[%v](%v) change to follower due to higher term %v.\n", rf.me, rf.state, args.Term)
+		DPrintf("Raft[%v](%v term:%v) change to follower due to higher term %v.\n", rf.me, rf.state, rf.currentTerm, args.Term)
 	}
 	reply.Success = false
 	reply.Term = rf.currentTerm
@@ -279,7 +279,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.currentTerm = args.Term
 			rf.state = follower
 			rf.votedFor = -1
-			DPrintf("Raft[%v](%v) change to follower due to higher term %v.\n", rf.me, rf.state, args.Term)
+			DPrintf("Raft[%v](%v term:%v) change to follower due to higher term %v.\n", rf.me, rf.state, rf.currentTerm, args.Term)
 		}
 	}
 
@@ -340,11 +340,15 @@ func (rf *Raft) killed() bool {
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		time.Sleep(rf.overtime)
-		DPrintf("Raft[%v] timeout at %v.\n", rf.me, time.Now())
 		rf.mu.Lock()
+		DPrintf("Raft[%v](%v term:%v) timeout at %v.\n", rf.me, rf.state, rf.currentTerm, time.Now())
 		if rf.heartBeat == false {
+			if rf.state == leader {
+				rf.mu.Unlock()
+				continue
+			}
 			rf.overtime = time.Duration(200+rand.Intn(200)) * time.Millisecond
-			DPrintf("Raft[%v] set overtime to %v.\n", rf.me, rf.overtime)
+			DPrintf("Raft[%v](%v term:%v) set overtime to %v.\n", rf.me, rf.state, rf.currentTerm, rf.overtime)
 			rf.startElection()
 			rf.mu.Unlock()
 		} else {
@@ -362,7 +366,7 @@ func (rf *Raft) startElection() {
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.heartBeat = true
-	DPrintf("Raft[%v](%v) start sending RequestVote RPC to all peers.\n", rf.me, rf.state)
+	DPrintf("Raft[%v](%v term:%v) start sending RequestVote RPC to all peers.\n", rf.me, rf.state, rf.currentTerm)
 	voteCount := 1
 	for i := range rf.peers {
 		if i == rf.me {
@@ -376,7 +380,7 @@ func (rf *Raft) startElection() {
 			LastLogTerm:  rf.log[len(rf.log)-1].Term,
 		}
 		reply := &RequestVoteReply{}
-		DPrintf("Raft[%v](%v) sending RequestVote RPC to Raft[%v].\n", rf.me, rf.state, index)
+		DPrintf("Raft[%v](%v term:%v) sending RequestVote RPC to Raft[%v].\n", rf.me, rf.state, rf.currentTerm, index)
 		go func() {
 			rf.sendRequestVote(index, args, reply)
 			rf.mu.Lock()
@@ -386,15 +390,15 @@ func (rf *Raft) startElection() {
 				rf.currentTerm = args.Term
 				rf.state = follower
 				rf.votedFor = -1
-				DPrintf("Raft[%v](%v) change to follower due to higher term %v.\n", rf.me, rf.state, reply.Term)
+				DPrintf("Raft[%v](%v term:%v) change to follower due to higher term %v.\n", rf.me, rf.state, rf.currentTerm, reply.Term)
 				return
 			}
 			if reply.VoteGranted {
-				DPrintf("Raft[%v](%v) get vote from Raft[%v].\n", rf.me, rf.state, index)
+				DPrintf("Raft[%v](%v term:%v) get vote from Raft[%v].\n", rf.me, rf.state, rf.currentTerm, index)
 				voteCount++
 				if voteCount == len(rf.peers)/2+1 {
 					rf.state = leader
-					DPrintf("Raft[%v](%v) get majority voting and become the leader.\n", rf.me, rf.state)
+					DPrintf("Raft[%v](%v term:%v) get majority voting and become the leader.\n", rf.me, rf.state, rf.currentTerm)
 					go rf.handleHeartBeats()
 				}
 			}
@@ -406,18 +410,18 @@ func (rf *Raft) handleHeartBeats() {
 	for {
 		rf.mu.Lock()
 		if rf.killed() {
-			DPrintf("Raft[%v](%v) is kiiled.\n", rf.me, rf.state)
+			DPrintf("Raft[%v](%v term:%v) is killed.\n", rf.me, rf.state, rf.currentTerm)
 			rf.mu.Unlock()
 			return
 		}
 		if rf.state != leader {
-			DPrintf("Raft[%v](%v) is not leader.\n", rf.me, rf.state)
+			DPrintf("Raft[%v](%v term:%v) is not leader.\n", rf.me, rf.state, rf.currentTerm)
 			rf.mu.Unlock()
 			return
 		}
-		DPrintf("Raft[%v](%v) start sending heartbeat.\n", rf.me, rf.state)
+		DPrintf("Raft[%v](%v term:%v) start sending heartbeat.\n", rf.me, rf.state, rf.currentTerm)
 		rf.sendHeartBeats()
-		DPrintf("Raft[%v](%v) finish sending heartbeat.\n", rf.me, rf.state)
+		DPrintf("Raft[%v](%v term:%v) finish sending heartbeat.\n", rf.me, rf.state, rf.currentTerm)
 		rf.mu.Unlock()
 		time.Sleep(heartBeatInterval)
 	}
@@ -432,7 +436,7 @@ func (rf *Raft) sendHeartBeats() {
 		Entries:      nil,
 		LeaderCommit: rf.commitIndex,
 	}
-	DPrintf("Raft[%v](%v) ready to send heartbeat.\n", rf.me, rf.state)
+	DPrintf("Raft[%v](%v term:%v) ready to send heartbeat.\n", rf.me, rf.state, rf.currentTerm)
 	for i := range rf.peers {
 		index := i
 		reply := &AppendEntriesReply{}
@@ -444,14 +448,14 @@ func (rf *Raft) sendHeartBeats() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 			if rf.killed() {
-				DPrintf("Raft[%v](%v) is kiiled.\n", rf.me, rf.state)
+				DPrintf("Raft[%v](%v term:%v) is kiiled.\n", rf.me, rf.state, rf.currentTerm)
 				return
 			}
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = args.Term
 				rf.state = follower
 				rf.votedFor = -1
-				DPrintf("Raft[%v](%v) change to follower due to higher term %v.\n", rf.me, rf.state, reply.Term)
+				DPrintf("Raft[%v](%v term:%v) change to follower due to higher term %v.\n", rf.me, rf.state, rf.currentTerm, reply.Term)
 				return
 			}
 		}()
